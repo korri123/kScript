@@ -1,0 +1,2 @@
+sVar = "hello "
+print (sVar + "world")

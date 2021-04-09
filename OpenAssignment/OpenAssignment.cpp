@@ -1,3 +1,5 @@
+#include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <stack>
@@ -23,9 +25,10 @@ class Variable
 public:
 	std::string name;
 
-	explicit Variable(const std::string& name)
-		: name(name)
+	explicit Variable(std::string name)
+		: name(std::move(name))
 	{
+		
 	}
 
 	virtual ~Variable() = default;
@@ -36,8 +39,8 @@ class NumericVariable : public Variable
 public:
 	double data = 0;
 
-	explicit NumericVariable(double data)
-		: data(data)
+	explicit NumericVariable(std::string name, double data)
+		: Variable(std::move(name)), data(data)
 	{
 	}
 };
@@ -47,8 +50,8 @@ class StringVariable : public Variable
 public:
 	std::string data;
 
-	explicit StringVariable(const std::string& data)
-		: data(data)
+	explicit StringVariable(std::string name, std::string data)
+		: Variable(std::move(name)), data(std::move(data))
 	{
 	}
 };
@@ -60,7 +63,13 @@ public:
 	virtual std::string ToString() = 0;
 };
 
-class VariableToken : public Token
+class OperandToken : public Token
+{
+public:
+	virtual ~OperandToken() = default;
+};
+
+/*class VariableToken : public OperandToken
 {
 public:
 	Variable* variable;
@@ -69,13 +78,12 @@ public:
 		: variable(variable)
 	{
 	}
-};
 
-class OperandToken : public Token
-{
-public:
-	virtual ~OperandToken() = default;
-};
+	std::string ToString() override
+	{
+		return variable->name;
+	}
+};*/
 
 class NumericToken : public OperandToken
 {
@@ -89,6 +97,40 @@ public:
 	virtual double Value() = 0;
 };
 
+class VariableToken 
+{
+public:
+	virtual Variable* GetVariable() = 0;
+};
+
+class NumericVariableToken : public NumericToken, public VariableToken
+{
+public:
+	NumericVariable* variable;
+
+	explicit NumericVariableToken(NumericVariable* variable)
+		: variable(variable)
+	{
+	}
+
+	std::string ToString() override
+	{
+		return std::to_string(variable->data);
+	}
+
+
+	Variable* GetVariable() override
+	{
+		return variable;
+	}
+
+
+	double Value() override
+	{
+		return variable->data;
+	}
+};
+
 class StringToken : public OperandToken
 {
 public:
@@ -96,8 +138,37 @@ public:
 	{
 		return Value();
 	}
-	virtual std::string Value() = 0;
+	virtual std::string& Value() = 0;
 };
+
+class StringVariableToken : public StringToken, public VariableToken
+{
+public:
+	StringVariable* variable;
+
+	explicit StringVariableToken(StringVariable* variable)
+		: variable(variable)
+	{
+	}
+
+	std::string ToString() override
+	{
+		return variable->data;
+	}
+
+
+	Variable* GetVariable() override
+	{
+		return variable;
+	}
+
+
+	std::string& Value() override
+	{
+		return variable->data;
+	}
+};
+
 
 class NumericConstantToken : public NumericToken
 {
@@ -126,7 +197,7 @@ public:
 	{
 	}
 
-	std::string Value() override
+	std::string& Value() override
 	{
 		return value;
 	}
@@ -144,26 +215,20 @@ public:
 	{
 	}
 
-
-	bool Precedes(const OperatorOrFunction& other) const
-	{
-		return other.precedence <= precedence;
-	}
+	bool Precedes(OperatorOrFunction* other) const;
 };
 
 class Operator : public OperatorOrFunction
 {
-protected:
-	Operator(std::string operator_, int precedence)
+
+public:
+	Operator(std::string operator_, int precedence, int numOperands)
 		: operator_(std::move(operator_)),
-		OperatorOrFunction(precedence)
+		OperatorOrFunction(precedence), numOperands(0)
 	{
 	}
-public:
-
+	std::size_t numOperands;
 	std::string operator_;
-
-	virtual std::size_t NumOperands() = 0;
 };
 
 class OperatorOrFunctionCallToken : public Token
@@ -230,6 +295,23 @@ public:
 	}
 };
 
+class DualStringOperation : public DualOperandOperation
+{
+	virtual std::unique_ptr<StringToken> EvalString(StringToken*, StringToken*) = 0;
+
+public:
+
+	std::unique_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
+	{
+		StringToken* _a, * _b;
+		if (((_a = dynamic_cast<StringToken*>(a))) && ((_b = dynamic_cast<StringToken*>(b))))
+		{
+			return EvalString(_a, _b);
+		}
+		return nullptr;
+	}
+};
+
 class SingleNumericOperation : public SingleOperandOperation
 {
 	virtual std::unique_ptr<NumericToken> EvalNumeric(NumericToken*) = 0;
@@ -251,11 +333,9 @@ class SingleOperandOperator : public Operator
 public:
 	std::vector<SingleOperandOperation*> operations;
 
-	std::size_t NumOperands() override { return 1; }
-
 	SingleOperandOperator(const std::string& operator_, int precedence,
 		std::vector<SingleOperandOperation*> operations={})
-		: Operator(operator_, precedence), operations(std::move(operations))
+		: Operator(operator_, precedence, 1), operations(std::move(operations))
 	{
 	}
 
@@ -274,11 +354,9 @@ class DualOperandOperator : public Operator
 public:
 	std::vector<DualOperandOperation*> operations;
 
-	std::size_t NumOperands() override { return 2; }
-
 	DualOperandOperator(const std::string& operator_, int precedence,
 		std::vector<DualOperandOperation*> operations={})
-		: Operator(operator_, precedence), operations(std::move(operations))
+		: Operator(operator_, precedence, 2), operations(std::move(operations))
 	{
 	}
 
@@ -297,13 +375,32 @@ class ScriptLine
 {
 public:
 	std::vector<std::unique_ptr<Token>> tokens;
+
+	explicit ScriptLine(std::vector<std::unique_ptr<Token>> tokens)
+		: tokens(std::move(tokens))
+	{
+	}
 };
 
 class ScriptModule
 {
 public:
-	std::vector<ScriptLine> scriptLines;
+
+	explicit ScriptModule(std::vector<std::string> scriptCompileLines)
+		: scriptCompileLines(std::move(scriptCompileLines))
+	{
+	}
+
+	ScriptModule() = default;
+	
+	std::vector<std::string> scriptCompileLines;
+	std::vector<ScriptLine> scriptRunLines;
+	std::vector<std::string>::iterator* curCompileLineIter = nullptr;
+	std::vector<ScriptLine>::iterator* curRunLineIter = nullptr;
 	std::map<std::string, std::unique_ptr<Variable>> scriptVariables;
+	std::stack<int> nestStack;
+	void Compile();
+	void Execute();
 };
 
 ScriptModule s_scriptModule;
@@ -314,21 +411,26 @@ public:
 	std::unique_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
 	{
 		std::string varName;
-		if (auto* varToken = dynamic_cast<StringConstantToken*>(a))
+		if (auto* varNameToken = dynamic_cast<StringConstantToken*>(a))
 		{
-			varName = varToken->ToString();
+			varName = varNameToken->ToString();
 		}
-		else if (auto* varToken = dynamic_cast<VariableToken*>(b))
+		else if (auto* varToken = dynamic_cast<VariableToken*>(a))
 		{
-			varName = varToken->variable
+			varName = varToken->GetVariable()->name;
 		}
-		if (auto* numericToken = dynamic_cast<NumericToken*>(b))
+		if (!varName.empty())
 		{
-			s_scriptModule.scriptVariables[varName] = std::unique_ptr<NumericVariable>(new NumericVariable(numericToken->Value()));
-		}
-		else if (auto* stringToken = dynamic_cast<StringToken*>(b))
-		{
-			s_scriptModule.scriptVariables[varName] = std::unique_ptr<StringVariable>(new StringVariable(stringToken->Value()));
+			if (auto* numericToken = dynamic_cast<NumericToken*>(b))
+			{
+				s_scriptModule.scriptVariables[varName] = std::make_unique<NumericVariable>(varName, numericToken->Value());
+				return std::make_unique<NumericVariableToken>(dynamic_cast<NumericVariable*>(s_scriptModule.scriptVariables[varName].get()));
+			}
+			if (auto* stringToken = dynamic_cast<StringToken*>(b))
+			{
+				s_scriptModule.scriptVariables[varName] = std::make_unique<StringVariable>(varName, stringToken->Value());
+				return std::make_unique<StringVariableToken>(dynamic_cast<StringVariable*>(s_scriptModule.scriptVariables[varName].get()));
+			}
 		}
 		return nullptr;
 	}
@@ -336,7 +438,7 @@ public:
 
 inline std::unique_ptr<NumericToken> Numeric(double x)
 {
-	return std::unique_ptr<NumericToken>(new NumericConstantToken(x));
+	return std::make_unique<NumericConstantToken>(x);
 }
 
 class LogicalOrOperation : public DualNumericsOperation
@@ -431,7 +533,7 @@ class LeftShiftOperation : public DualNumericsOperation
 {
 	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
-		return Numeric(static_cast<int>(a->Value()) << static_cast<int>(b->Value()));
+		return Numeric(static_cast<int64_t>(a->Value()) << static_cast<int>(b->Value()));
 	}
 };
 
@@ -456,6 +558,14 @@ class AddOperation : public DualNumericsOperation
 	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() + b->Value());
+	}
+};
+
+class StringAddOperation : public DualStringOperation
+{
+	std::unique_ptr<StringToken> EvalString(StringToken* a, StringToken* b) override
+	{
+		return std::make_unique<StringConstantToken>(a->Value() + b->Value());
 	}
 };
 
@@ -531,7 +641,7 @@ std::vector<Operator*> s_operators =
 	new DualOperandOperator("&", 16, {new BitwiseAndOperation()}),
 	new DualOperandOperator("<<", 18, {new LeftShiftOperation()}),
 	new DualOperandOperator(">>", 18, {new RightShiftOperation()}),
-	new DualOperandOperator("+", 19, {new AddOperation()}),
+	new DualOperandOperator("+", 19, {new AddOperation(), new StringAddOperation()}),
 	new DualOperandOperator("-", 19, {new SubtractOperation()}),
 	new DualOperandOperator("*", 21, {new MultiplyOperation()}),
 	new DualOperandOperator("/", 21, {new DivideOperation()}),
@@ -539,8 +649,8 @@ std::vector<Operator*> s_operators =
 	new DualOperandOperator("^", 23, {new PowOperation()}),
 	new SingleOperandOperator("-", 25, {new NegateOperation()}),
 	new SingleOperandOperator("!", 27, {new LogicalNotOperation()}),
-	new SingleOperandOperator("(", 80),
-	new SingleOperandOperator(")", 80),
+	new Operator("(", 80, 0),
+	new Operator(")", 80, 0),
 };
 
 class Function : public OperatorOrFunction
@@ -556,6 +666,10 @@ public:
 
 	virtual double Execute(const std::vector<OperandToken*>& params) = 0;
 	virtual bool ValidateParams(const std::vector<OperandToken*>& params) = 0;
+	virtual void Parse()
+	{
+		
+	}
 };
 
 class FunctionCallToken : public OperatorOrFunctionCallToken
@@ -596,9 +710,54 @@ public:
 	}
 };
 
+class PrintFunction : public Function
+{
+public:
+
+	PrintFunction() : Function("print", 1) {}
+
+	double Execute(const std::vector<OperandToken*>& params) override
+	{
+		std::string toPrint;
+		if (auto* strToken = dynamic_cast<StringToken*>(params.at(0)))
+		{
+			toPrint = strToken->Value();
+		}
+		else if (auto* numericToken = dynamic_cast<NumericToken*>(params.at(0)))
+		{
+			toPrint = std::to_string(numericToken->Value());
+		}
+		std::cout << toPrint << std::endl;
+		return 1;
+	}
+
+	bool ValidateParams(const std::vector<OperandToken*>& params) override
+	{
+		return true;
+	}
+};
+
+class IfFunction : public Function
+{
+public:
+
+	IfFunction() : Function("if", 1){}
+
+	double Execute(const std::vector<OperandToken*>& params)
+	{
+		
+	};
+	
+	bool ValidateParams(const std::vector<OperandToken*>& params)
+	{
+		return true;
+	};
+};
+
 std::vector<Function*> s_functions =
 {
-	new SqrtFunction()
+	new SqrtFunction(),
+	new PrintFunction(),
 };
 
 class StringIterator
@@ -632,58 +791,63 @@ public:
 		++pos;
 	}
 
-};
-
-char Peek(std::string::const_iterator& iter)
-{
-	
-	return *(iter + 1);
-}
-
-std::string GetCurOperandString(StringIterator& iterator)
-{
-	std::string result;
-	while (!iterator.End())
+	std::string GetStringInQuotationMarks()
 	{
-		const auto ch = iterator.Peek();
-		if (isspace(static_cast<unsigned char>(ch)) || ispunct(static_cast<unsigned char>(ch)) && ch != '_')
-			break;
-		iterator.Advance();
-		result += ch;
+		Advance();
+		auto fPos = string.find_first_of('"', this->pos);
+		if (fPos == std::string::npos)
+			throw ParseError("Mismatched quotation marks (\")");
+		auto ret = string.substr(pos, fPos - pos);
+		pos = fPos + 1;
+		return ret;
 	}
-	return result;
-}
 
-std::string GetCurOperatorString(StringIterator& iterator)
-{
-	std::string result;
-	while (!iterator.End())
+	std::string GetCurOperandString()
 	{
-		const auto ch = iterator.Peek();
-		if (isalnum(ch) || isspace(ch))
-			break;
-		iterator.Advance();
-		result += ch;
-	}
-	return result;
-}
-
-std::unique_ptr<OperatorToken> ParseOperator(StringIterator& iterator)
-{
-	const auto opStr = GetCurOperatorString(iterator);
-	if (opStr.empty())
-	{
-		return nullptr;
-	}
-	for (auto& op : s_operators)
-	{
-		if (op->operator_ == opStr)
+		std::string result;
+		while (!End())
 		{
-			return std::unique_ptr<OperatorToken>(new OperatorToken(op));
+			const auto ch = Peek();
+			if (isspace(static_cast<unsigned char>(ch)) || ispunct(static_cast<unsigned char>(ch)) && ch != '_')
+				break;
+			Advance();
+			result += ch;
 		}
+		return result;
 	}
-	throw ParseError("Unsupported operator " + opStr);
-}
+
+	std::string GetCurOperatorString()
+	{
+		std::string result;
+		while (!End())
+		{
+			const auto ch = Peek();
+			if (isalnum(ch) || isspace(ch) || ch == '"')
+				break;
+			Advance();
+			result += ch;
+		}
+		return result;
+	}
+
+	std::unique_ptr<OperatorToken> ParseOperator()
+	{
+		const auto opStr = GetCurOperatorString();
+		if (opStr.empty())
+		{
+			return nullptr;
+		}
+		for (auto& op : s_operators)
+		{
+			if (op->operator_ == opStr)
+			{
+				return std::make_unique<OperatorToken>(op);
+			}
+		}
+		throw ParseError("Unsupported operator " + opStr);
+	}
+	
+};
 
 std::unique_ptr<OperandToken> ParseNumericConstant(const std::string& opStr)
 {
@@ -704,8 +868,20 @@ std::unique_ptr<FunctionCallToken> ParseFunctionCall(const std::string& opStr)
 	{
 		if (iter->name == opStr)
 		{
-			return std::unique_ptr<FunctionCallToken>(new FunctionCallToken(iter));
+			return std::make_unique<FunctionCallToken>(iter);
 		}
+	}
+	return nullptr;
+}
+
+std::unique_ptr<OperandToken> ParseVariableToken(const std::string& opStr)
+{
+	if (const auto iter = s_scriptModule.scriptVariables.find(opStr); iter != s_scriptModule.scriptVariables.end())
+	{
+		if (auto* numVar = dynamic_cast<NumericVariable*>(iter->second.get()))
+			return std::make_unique<NumericVariableToken>(numVar);
+		if (auto* strVar = dynamic_cast<StringVariable*>(iter->second.get()))
+			return std::make_unique<StringVariableToken>(strVar);
 	}
 	return nullptr;
 }
@@ -724,7 +900,7 @@ bool IsClosedBracket(OperatorOrFunctionCallToken* token)
 	return false;
 }
 
-std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator)
+std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator, ScriptModule& scriptModule)
 {
 	std::vector<std::unique_ptr<Token>> result;
 	std::stack<std::unique_ptr<OperatorOrFunctionCallToken>> operatorsOrFuncs;
@@ -735,8 +911,7 @@ std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator)
 			iterator.Advance();
 			continue;
 		}
-		
-		if (auto operator_ = ParseOperator(iterator))
+		if (auto operator_ = iterator.ParseOperator())
 		{
 			if (IsClosedBracket(operator_.get()))
 			{
@@ -753,7 +928,7 @@ std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator)
 			{
 				if (!IsOpenBracket(operator_.get()))
 				{
-					while (!operatorsOrFuncs.empty() && operatorsOrFuncs.top()->value->Precedes(*operator_->value) && !IsOpenBracket(operator_.get()))
+					while (!operatorsOrFuncs.empty() && operatorsOrFuncs.top()->value->Precedes(operator_->value) && !IsOpenBracket(operatorsOrFuncs.top().get()))
 					{
 						result.push_back(std::move(operatorsOrFuncs.top()));
 						operatorsOrFuncs.pop();
@@ -764,20 +939,28 @@ std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator)
 		}
 		else
 		{
-			const auto opStr = GetCurOperandString(iterator);
-			if (!opStr.empty())
+			if (iterator.Peek() == '"')
 			{
-				if (auto operand = ParseNumericConstant(opStr))
+				auto str = iterator.GetStringInQuotationMarks();
+				result.push_back(std::make_unique<StringConstantToken>(str));
+			}
+			else
+			{
+				const auto opStr = iterator.GetCurOperandString();
+				if (!opStr.empty())
 				{
-					result.push_back(std::move(operand));
-				}
-				else if (auto function = ParseFunctionCall(opStr))
-				{
-					operatorsOrFuncs.push(std::move(function));
-				}
-				else
-				{
-					result.push_back(std::unique_ptr<StringConstantToken>(new StringConstantToken(opStr)));
+					if (auto operand = ParseNumericConstant(opStr))
+					{
+						result.push_back(std::move(operand));
+					}
+					else if (auto function = ParseFunctionCall(opStr))
+					{
+						operatorsOrFuncs.push(std::move(function));
+					}
+					else
+					{
+						result.push_back(std::make_unique<StringConstantToken>(opStr));
+					}
 				}
 			}
 		}
@@ -798,13 +981,23 @@ std::unique_ptr<OperandToken> EvaluateExpression(std::vector<std::unique_ptr<Tok
 	{
 		if (auto* operand = dynamic_cast<OperandToken*>(token.get()))
 		{
-			stack.push(operand);
+			std::unique_ptr<OperandToken> varToken;
+			if (auto* strToken = dynamic_cast<StringConstantToken*>(operand); strToken && ((varToken = ParseVariableToken(strToken->Value()))))
+			{
+				// variable
+				tempTokens.push_back(std::move(varToken));
+				stack.push(tempTokens.back().get());
+			}
+			else
+			{
+				stack.push(operand);
+			}
 		}
 		else if (auto* operator_ = dynamic_cast<OperatorToken*>(token.get()))
 		{
 			std::unique_ptr<OperandToken> result;
-			if (stack.size() < operator_->Value()->NumOperands())
-				throw ParseError("Invalid number of operands for operator " + std::to_string(operator_->Value()->NumOperands()));
+			if (stack.size() < operator_->Value()->numOperands)
+				throw ParseError("Invalid number of operands for operator " + std::to_string(operator_->Value()->numOperands));
 			if (auto* op = dynamic_cast<DualOperandOperator*>(operator_->Value()))
 			{
 				auto* rhsToken = stack.top();
@@ -853,10 +1046,69 @@ std::unique_ptr<OperandToken> EvaluateExpression(std::vector<std::unique_ptr<Tok
 	return nullptr;
 }
 
-int main()
+bool OperatorOrFunction::Precedes(OperatorOrFunction* other) const
 {
-	StringIterator iterator("5 + sqrt 9");
-	auto compiled = ParseExpression(iterator);
-	auto evaluated = EvaluateExpression(compiled);
-	std::cout << evaluated->ToString() << std::endl;
+	if (auto* op = dynamic_cast<Operator*>(other))
+	{
+		if (op->numOperands == 1)
+			return other->precedence < precedence;
+	}
+	return other->precedence <= precedence;
+}
+
+void ScriptModule::Compile()
+{
+	for (auto iter = scriptCompileLines.begin(); iter != scriptCompileLines.end(); ++iter)
+	{
+		auto& line = *iter;
+		if (line.empty())
+			continue;
+		StringIterator iterator(line);
+		curCompileLineIter = &iter;
+		scriptRunLines.emplace_back(ParseExpression(iterator, *this));
+	}
+}
+
+void ScriptModule::Execute()
+{
+	auto lineNum = 0u;
+	try
+	{
+		for (auto& line : scriptRunLines)
+		{
+			++lineNum;
+			EvaluateExpression(line.tokens);
+		}
+	}
+	catch (const ParseError& e)
+	{
+		std::cout << "Syntax error on line " << lineNum << std::endl;
+		std::cout << e.what() << std::endl;
+	}
+	
+}
+
+void ParseFile(const std::string& fileName)
+{
+	std::ifstream is(fileName);
+	std::vector<std::string> scriptLines;
+	do
+	{
+		scriptLines.emplace_back();
+	} while (std::getline(is, scriptLines.back()));
+	s_scriptModule = ScriptModule(scriptLines);
+	s_scriptModule.Compile();
+	s_scriptModule.Execute();
+}
+
+int main(int argc, char* argv[])
+{
+	if (argc == 2)
+	{
+		ParseFile(argv[1]);
+	}
+	else
+	{
+		
+	}
 }
