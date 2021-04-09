@@ -1,2 +1,5 @@
-sVar = "hello "
-print (sVar + "world")
+if 1
+	print "tst"
+else
+	print "else"	
+end 

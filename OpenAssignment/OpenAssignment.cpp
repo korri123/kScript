@@ -14,11 +14,14 @@ class Operation;
 class ParseError : public std::runtime_error
 {
 public:
-	explicit ParseError(const std::string& _Message)
-		: runtime_error(_Message)
+	int line;
+	explicit ParseError(const std::string& _Message, int line=-1)
+		: runtime_error(_Message), line(line)
 	{
 	}
 };
+
+
 
 class Variable
 {
@@ -27,9 +30,7 @@ public:
 
 	explicit Variable(std::string name)
 		: name(std::move(name))
-	{
-		
-	}
+	{}
 
 	virtual ~Variable() = default;
 };
@@ -382,6 +383,45 @@ public:
 	}
 };
 
+class ScriptModule;
+
+class NestedBeginDeclaration
+{
+public:
+	std::string name;
+	std::size_t line;
+	std::function<void(ScriptModule&)> onEnd;
+
+	NestedBeginDeclaration(const std::string& name, std::size_t line)
+		: name(name),
+		  line(line)
+	{
+	}
+};
+
+class ScriptModule;
+
+class EndToBegin
+{
+public:
+	int lineNumber = 0;
+	std::function<void(ScriptModule&)> execute;
+
+	EndToBegin(int lineNumber, std::function<void(ScriptModule&)> execute)
+		: lineNumber(lineNumber),
+		  execute(std::move(execute))
+	{
+	}
+
+	explicit EndToBegin(int lineNumber)
+		: lineNumber(lineNumber)
+	{
+	}
+
+
+	EndToBegin() = default;
+};
+
 class ScriptModule
 {
 public:
@@ -398,9 +438,19 @@ public:
 	std::vector<std::string>::iterator* curCompileLineIter = nullptr;
 	std::vector<ScriptLine>::iterator* curRunLineIter = nullptr;
 	std::map<std::string, std::unique_ptr<Variable>> scriptVariables;
-	std::stack<int> nestStack;
+	std::stack<NestedBeginDeclaration> nestStack;
+	std::map<int, int> beginToEndMap;
+	std::map<int, EndToBegin> endToBeginMap;
 	void Compile();
 	void Execute();
+	std::size_t GetCurrentCompileLine()
+	{
+		return *curCompileLineIter - scriptCompileLines.begin();
+	}
+	std::size_t GetCurrentRunLine()
+	{
+		return *curRunLineIter - scriptRunLines.begin();
+	}
 };
 
 ScriptModule s_scriptModule;
@@ -653,22 +703,38 @@ std::vector<Operator*> s_operators =
 	new Operator(")", 80, 0),
 };
 
+
+
 class Function : public OperatorOrFunction
 {
 public:
 	std::string name;
 	std::size_t numParams;
 
-	explicit Function(const std::string& name, std::size_t numParams)
-		: OperatorOrFunction(23), name(name), numParams(numParams)
+	explicit Function(std::string name, std::size_t numParams)
+		: OperatorOrFunction(23), name(std::move(name)), numParams(numParams)
 	{
 	}
 
-	virtual double Execute(const std::vector<OperandToken*>& params) = 0;
+	virtual double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) = 0;
 	virtual bool ValidateParams(const std::vector<OperandToken*>& params) = 0;
-	virtual void Parse()
+	
+	virtual void ValidateCompilation(ScriptModule& scriptModule)
 	{
-		
+	}
+};
+
+class NestedFunction : public Function
+{
+public:
+	NestedFunction(const std::string& name, std::size_t numParams)
+		: Function(name, numParams)
+	{
+	}
+
+	void ValidateCompilation(ScriptModule& scriptModule) override
+	{
+		scriptModule.nestStack.emplace(name, *scriptModule.curCompileLineIter - scriptModule.scriptCompileLines.begin());
 	}
 };
 
@@ -697,7 +763,7 @@ public:
 
 	SqrtFunction() : Function("sqrt", 1){}
 
-	double Execute(const std::vector<OperandToken*>& params) override
+	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
 	{
 		auto* param = dynamic_cast<NumericToken*>(params.at(0));
 		return std::sqrt(param->Value());
@@ -716,7 +782,7 @@ public:
 
 	PrintFunction() : Function("print", 1) {}
 
-	double Execute(const std::vector<OperandToken*>& params) override
+	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
 	{
 		std::string toPrint;
 		if (auto* strToken = dynamic_cast<StringToken*>(params.at(0)))
@@ -737,16 +803,24 @@ public:
 	}
 };
 
-class IfFunction : public Function
+class IfFunction : public NestedFunction
 {
 public:
 
-	IfFunction() : Function("if", 1){}
+	IfFunction() : NestedFunction("if", 1){}
 
-	double Execute(const std::vector<OperandToken*>& params)
+	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
 	{
-		
-	};
+		if (auto* numToken = dynamic_cast<NumericToken*>(params.at(0)))
+		{
+			if (!numToken->Value())
+			{
+				const auto line = scriptModule.beginToEndMap[scriptModule.GetCurrentRunLine()];
+				*scriptModule.curRunLineIter = scriptModule.scriptRunLines.begin() + line;
+			}
+		}
+		return 0;
+	}
 	
 	bool ValidateParams(const std::vector<OperandToken*>& params)
 	{
@@ -754,10 +828,74 @@ public:
 	};
 };
 
+class ElseFunction : public Function
+{
+	ElseFunction() : Function("else", 0) {}
+
+
+public:
+	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
+	{
+		
+	}
+	bool ValidateParams(const std::vector<OperandToken*>& params) override { return true;}
+	void ValidateCompilation(ScriptModule& scriptModule) override
+	{
+		auto& top = scriptModule.nestStack.top();
+		if (scriptModule.nestStack.empty() || (top.name != "if" || top.name != "elseif"))
+		{
+			throw ParseError("Misplaced 'else' statement");
+		}
+		scriptModule.beginToEndMap[top.line] = scriptModule.GetCurrentCompileLine();
+	}
+};
+
+class EndFunction : public Function
+{
+public:
+
+	EndFunction() : Function("end", 0) {}
+
+	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule)
+	{
+		const auto curLine = scriptModule.GetCurrentRunLine();
+		auto& e = scriptModule.endToBeginMap[curLine];
+		if (e.execute)
+		{
+			e.execute(scriptModule);
+		}
+		return 0;
+	}
+
+	bool ValidateParams(const std::vector<OperandToken*>& params)
+	{
+		return true;
+	}
+
+
+	void ValidateCompilation(ScriptModule& scriptModule) override
+	{
+		if (scriptModule.nestStack.empty())
+		{
+			throw ParseError("'end' statement is missing a begin-type statement (if / while / def)");
+		}
+		const auto& top = scriptModule.nestStack.top();
+		const auto curLine = scriptModule.GetCurrentCompileLine();
+		if (scriptModule.beginToEndMap.find(top.line) == scriptModule.beginToEndMap.end()) // make sure we don't override an else
+		{
+			scriptModule.beginToEndMap[top.line] = curLine;
+		}
+		scriptModule.endToBeginMap[curLine] = EndToBegin(top.line, top.onEnd);
+		scriptModule.nestStack.pop();
+	}
+};
+
 std::vector<Function*> s_functions =
 {
 	new SqrtFunction(),
 	new PrintFunction(),
+	new IfFunction(),
+	new EndFunction()
 };
 
 class StringIterator
@@ -955,6 +1093,7 @@ std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator, Sc
 					}
 					else if (auto function = ParseFunctionCall(opStr))
 					{
+						function->Value()->ValidateCompilation(scriptModule);
 						operatorsOrFuncs.push(std::move(function));
 					}
 					else
@@ -973,7 +1112,7 @@ std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator, Sc
 	return result;
 }
 
-std::unique_ptr<OperandToken> EvaluateExpression(std::vector<std::unique_ptr<Token>>& tokens)
+std::unique_ptr<OperandToken> EvaluateExpression(std::vector<std::unique_ptr<Token>>& tokens, ScriptModule& scriptModule)
 {
 	std::vector<std::unique_ptr<OperandToken>> tempTokens;
 	std::stack<OperandToken*> stack;
@@ -1029,7 +1168,7 @@ std::unique_ptr<OperandToken> EvaluateExpression(std::vector<std::unique_ptr<Tok
 			}
 			if (!function->Value()->ValidateParams(params))
 				throw ParseError("Wrong parameter types for function " + function->ToString());
-			const auto result = function->Value()->Execute(params);
+			const auto result = function->Value()->Execute(params, scriptModule);
 			tempTokens.push_back(Numeric(result));
 			stack.push(tempTokens.back().get());
 		}
@@ -1058,14 +1197,31 @@ bool OperatorOrFunction::Precedes(OperatorOrFunction* other) const
 
 void ScriptModule::Compile()
 {
-	for (auto iter = scriptCompileLines.begin(); iter != scriptCompileLines.end(); ++iter)
+	auto lineNum = 0u;
+	try
 	{
-		auto& line = *iter;
-		if (line.empty())
-			continue;
-		StringIterator iterator(line);
-		curCompileLineIter = &iter;
-		scriptRunLines.emplace_back(ParseExpression(iterator, *this));
+		for (auto iter = scriptCompileLines.begin(); iter != scriptCompileLines.end(); ++iter)
+		{
+			++lineNum;
+			auto& line = *iter;
+			if (line.empty())
+				continue;
+			StringIterator iterator(line);
+			curCompileLineIter = &iter;
+			scriptRunLines.emplace_back(ParseExpression(iterator, *this));
+		}
+		if (!nestStack.empty())
+		{
+			throw ParseError("Begin-type block '" + nestStack.top().name + "' is missing an 'end' specifier", nestStack.top().line);
+		}
+	}
+	catch (const ParseError& e)
+	{
+		auto line = lineNum;
+		if (e.line != -1)
+			line = e.line;
+		std::cout << "Syntax error on line " << line << std::endl;
+		std::cout << e.what() << std::endl;
 	}
 }
 
@@ -1074,15 +1230,20 @@ void ScriptModule::Execute()
 	auto lineNum = 0u;
 	try
 	{
-		for (auto& line : scriptRunLines)
+		for (auto iter = this->scriptRunLines.begin(); iter != this->scriptRunLines.end(); ++iter)
 		{
+			auto& line = *iter;
+			this->curRunLineIter = &iter;
 			++lineNum;
-			EvaluateExpression(line.tokens);
+			EvaluateExpression(line.tokens, *this);
 		}
 	}
 	catch (const ParseError& e)
 	{
-		std::cout << "Syntax error on line " << lineNum << std::endl;
+		auto line = lineNum;
+		if (e.line != -1)
+			line = e.line;
+		std::cout << "Runtime error on line " << line << std::endl;
 		std::cout << e.what() << std::endl;
 	}
 	
@@ -1094,6 +1255,8 @@ void ParseFile(const std::string& fileName)
 	std::vector<std::string> scriptLines;
 	do
 	{
+		if (!scriptLines.empty() && scriptLines.back().empty())
+			scriptLines.pop_back();
 		scriptLines.emplace_back();
 	} while (std::getline(is, scriptLines.back()));
 	s_scriptModule = ScriptModule(scriptLines);
