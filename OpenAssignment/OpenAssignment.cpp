@@ -1,4 +1,5 @@
 #include <iostream>
+#include <map>
 #include <stack>
 #include <string>
 #include <utility>
@@ -17,9 +18,39 @@ public:
 	}
 };
 
-enum class OperandType
+class Variable
 {
-	None, Number, String
+public:
+	std::string name;
+
+	explicit Variable(const std::string& name)
+		: name(name)
+	{
+	}
+
+	virtual ~Variable() = default;
+};
+
+class NumericVariable : public Variable
+{
+public:
+	double data = 0;
+
+	explicit NumericVariable(double data)
+		: data(data)
+	{
+	}
+};
+
+class StringVariable : public Variable
+{
+public:
+	std::string data;
+
+	explicit StringVariable(const std::string& data)
+		: data(data)
+	{
+	}
 };
 
 class Token
@@ -27,6 +58,17 @@ class Token
 public:
 	virtual ~Token() = default;
 	virtual std::string ToString() = 0;
+};
+
+class VariableToken : public Token
+{
+public:
+	Variable* variable;
+
+	explicit VariableToken(Variable* variable)
+		: variable(variable)
+	{
+	}
 };
 
 class OperandToken : public Token
@@ -38,29 +80,56 @@ public:
 class NumericToken : public OperandToken
 {
 public:
-	double value;
-
-	explicit NumericToken(double value)
-		: value(value)
-	{
-	}
-
 
 	std::string ToString() override
 	{
-		return std::to_string(value);
+		return std::to_string(Value());
 	}
 
-	virtual double Value()
-	{
-		return value;
-	}
+	virtual double Value() = 0;
 };
 
 class StringToken : public OperandToken
 {
 public:
+	std::string ToString() override
+	{
+		return Value();
+	}
+	virtual std::string Value() = 0;
+};
+
+class NumericConstantToken : public NumericToken
+{
+
+public:
+	double value;
+
+	explicit NumericConstantToken(double value)
+		: value(value)
+	{
+	}
+
+	double Value() override
+	{
+		return value;
+	}
+};
+
+class StringConstantToken : public StringToken
+{
+public:
 	std::string value;
+
+	explicit StringConstantToken(std::string value)
+		: value(std::move(value))
+	{
+	}
+
+	std::string Value() override
+	{
+		return value;
+	}
 };
 
 class OperatorOrFunction
@@ -224,9 +293,50 @@ public:
 	}
 };
 
+class ScriptLine
+{
+public:
+	std::vector<std::unique_ptr<Token>> tokens;
+};
+
+class ScriptModule
+{
+public:
+	std::vector<ScriptLine> scriptLines;
+	std::map<std::string, std::unique_ptr<Variable>> scriptVariables;
+};
+
+ScriptModule s_scriptModule;
+
+class AssignVariableOperation : public DualOperandOperation
+{
+public:
+	std::unique_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
+	{
+		std::string varName;
+		if (auto* varToken = dynamic_cast<StringConstantToken*>(a))
+		{
+			varName = varToken->ToString();
+		}
+		else if (auto* varToken = dynamic_cast<VariableToken*>(b))
+		{
+			varName = varToken->variable
+		}
+		if (auto* numericToken = dynamic_cast<NumericToken*>(b))
+		{
+			s_scriptModule.scriptVariables[varName] = std::unique_ptr<NumericVariable>(new NumericVariable(numericToken->Value()));
+		}
+		else if (auto* stringToken = dynamic_cast<StringToken*>(b))
+		{
+			s_scriptModule.scriptVariables[varName] = std::unique_ptr<StringVariable>(new StringVariable(stringToken->Value()));
+		}
+		return nullptr;
+	}
+};
+
 inline std::unique_ptr<NumericToken> Numeric(double x)
 {
-	return std::unique_ptr<NumericToken>(new NumericToken(x));
+	return std::unique_ptr<NumericToken>(new NumericConstantToken(x));
 }
 
 class LogicalOrOperation : public DualNumericsOperation
@@ -393,7 +503,7 @@ class NegateOperation : public SingleNumericOperation
 {
 	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* t)
 	{
-		return Numeric(-t->value);
+		return Numeric(-t->Value());
 	}
 };
 
@@ -401,14 +511,14 @@ class LogicalNotOperation : public SingleNumericOperation
 {
 	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* t)
 	{
-		return Numeric(!t->value);
+		return Numeric(!t->Value());
 	}
 };
 
 
 std::vector<Operator*> s_operators =
 {
-	new DualOperandOperator("=", 2),
+	new DualOperandOperator("=", 2, {new AssignVariableOperation()}),
 	new DualOperandOperator("||", 5, {new LogicalOrOperation()}),
 	new DualOperandOperator("&&", 7, {new LogicalAndOperation()}),
 	new DualOperandOperator("==", 13, {new EqualsOperation()}),
@@ -579,8 +689,8 @@ std::unique_ptr<OperandToken> ParseNumericConstant(const std::string& opStr)
 {
 	try
 	{
-		auto num = std::stod(opStr);
-		return std::unique_ptr<NumericToken>(new NumericToken(num));
+		const auto num = std::stod(opStr);
+		return Numeric(num);
 	}
 	catch (std::invalid_argument&)
 	{
@@ -664,6 +774,10 @@ std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator)
 				else if (auto function = ParseFunctionCall(opStr))
 				{
 					operatorsOrFuncs.push(std::move(function));
+				}
+				else
+				{
+					result.push_back(std::unique_ptr<StringConstantToken>(new StringConstantToken(opStr)));
 				}
 			}
 		}
