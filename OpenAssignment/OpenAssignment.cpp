@@ -21,8 +21,6 @@ public:
 	}
 };
 
-
-
 class Variable
 {
 public:
@@ -69,22 +67,6 @@ class OperandToken : public Token
 public:
 	virtual ~OperandToken() = default;
 };
-
-/*class VariableToken : public OperandToken
-{
-public:
-	Variable* variable;
-
-	explicit VariableToken(Variable* variable)
-		: variable(variable)
-	{
-	}
-
-	std::string ToString() override
-	{
-		return variable->name;
-	}
-};*/
 
 class NumericToken : public OperandToken
 {
@@ -270,22 +252,22 @@ class Operation
 class SingleOperandOperation : public Operation
 {
 public:
-	virtual std::unique_ptr<OperandToken> Eval(OperandToken* a) = 0;
+	virtual std::shared_ptr<OperandToken> Eval(OperandToken* a) = 0;
 };
 
 class DualOperandOperation : public Operation
 {
 public:
-	virtual std::unique_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) = 0;
+	virtual std::shared_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) = 0;
 };
 
 class DualNumericsOperation : public DualOperandOperation
 {
-	virtual std::unique_ptr<NumericToken> EvalNumeric(NumericToken*, NumericToken*) = 0;
+	virtual std::shared_ptr<NumericToken> EvalNumeric(NumericToken*, NumericToken*) = 0;
 
 public:
 
-	std::unique_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
+	std::shared_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
 	{
 		NumericToken* _a, *_b;
 		if (((_a = dynamic_cast<NumericToken*>(a))) && ((_b = dynamic_cast<NumericToken*>(b))))
@@ -298,11 +280,11 @@ public:
 
 class DualStringOperation : public DualOperandOperation
 {
-	virtual std::unique_ptr<StringToken> EvalString(StringToken*, StringToken*) = 0;
+	virtual std::shared_ptr<StringToken> EvalString(StringToken*, StringToken*) = 0;
 
 public:
 
-	std::unique_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
+	std::shared_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
 	{
 		StringToken* _a, * _b;
 		if (((_a = dynamic_cast<StringToken*>(a))) && ((_b = dynamic_cast<StringToken*>(b))))
@@ -315,11 +297,11 @@ public:
 
 class SingleNumericOperation : public SingleOperandOperation
 {
-	virtual std::unique_ptr<NumericToken> EvalNumeric(NumericToken*) = 0;
+	virtual std::shared_ptr<NumericToken> EvalNumeric(NumericToken*) = 0;
 
 public:
 
-	std::unique_ptr<OperandToken> Eval(OperandToken* a) override
+	std::shared_ptr<OperandToken> Eval(OperandToken* a) override
 	{
 		if (auto* token = dynamic_cast<NumericToken*>(a))
 		{
@@ -340,7 +322,7 @@ public:
 	{
 	}
 
-	std::unique_ptr<OperandToken> Eval(OperandToken* token)
+	std::shared_ptr<OperandToken> Eval(OperandToken* token)
 	{
 		for (auto& operation : operations)
 		{
@@ -361,7 +343,7 @@ public:
 	{
 	}
 
-	std::unique_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b)
+	std::shared_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b)
 	{
 		for (auto& operation : operations)
 		{
@@ -375,9 +357,9 @@ public:
 class ScriptLine
 {
 public:
-	std::vector<std::unique_ptr<Token>> tokens;
+	std::vector<std::shared_ptr<Token>> tokens;
 
-	explicit ScriptLine(std::vector<std::unique_ptr<Token>> tokens)
+	explicit ScriptLine(std::vector<std::shared_ptr<Token>> tokens)
 		: tokens(std::move(tokens))
 	{
 	}
@@ -437,11 +419,13 @@ public:
 	std::vector<ScriptLine> scriptRunLines;
 	std::vector<std::string>::iterator* curCompileLineIter = nullptr;
 	std::vector<ScriptLine>::iterator* curRunLineIter = nullptr;
-	std::map<std::string, std::unique_ptr<Variable>> scriptVariables;
+	std::map<std::string, std::shared_ptr<Variable>> scriptVariables;
 	std::stack<NestedBeginDeclaration> nestStack;
 	std::map<int, int> beginToEndMap;
 	std::map<int, EndToBegin> endToBeginMap;
-	void Compile();
+	std::stack<bool> ifResultStack;
+
+	bool Compile();
 	void Execute();
 	std::size_t GetCurrentCompileLine()
 	{
@@ -451,6 +435,12 @@ public:
 	{
 		return *curRunLineIter - scriptRunLines.begin();
 	}
+
+	void GoToLine(int line)
+	{
+		if (line > 0)
+			*curRunLineIter = scriptRunLines.begin() + (line - 1);
+	}
 };
 
 ScriptModule s_scriptModule;
@@ -458,7 +448,7 @@ ScriptModule s_scriptModule;
 class AssignVariableOperation : public DualOperandOperation
 {
 public:
-	std::unique_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
+	std::shared_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
 	{
 		std::string varName;
 		if (auto* varNameToken = dynamic_cast<StringConstantToken*>(a))
@@ -473,27 +463,27 @@ public:
 		{
 			if (auto* numericToken = dynamic_cast<NumericToken*>(b))
 			{
-				s_scriptModule.scriptVariables[varName] = std::make_unique<NumericVariable>(varName, numericToken->Value());
-				return std::make_unique<NumericVariableToken>(dynamic_cast<NumericVariable*>(s_scriptModule.scriptVariables[varName].get()));
+				s_scriptModule.scriptVariables[varName] = std::make_shared<NumericVariable>(varName, numericToken->Value());
+				return std::make_shared<NumericVariableToken>(dynamic_cast<NumericVariable*>(s_scriptModule.scriptVariables[varName].get()));
 			}
 			if (auto* stringToken = dynamic_cast<StringToken*>(b))
 			{
-				s_scriptModule.scriptVariables[varName] = std::make_unique<StringVariable>(varName, stringToken->Value());
-				return std::make_unique<StringVariableToken>(dynamic_cast<StringVariable*>(s_scriptModule.scriptVariables[varName].get()));
+				s_scriptModule.scriptVariables[varName] = std::make_shared<StringVariable>(varName, stringToken->Value());
+				return std::make_shared<StringVariableToken>(dynamic_cast<StringVariable*>(s_scriptModule.scriptVariables[varName].get()));
 			}
 		}
 		return nullptr;
 	}
 };
 
-inline std::unique_ptr<NumericToken> Numeric(double x)
+inline std::shared_ptr<NumericToken> Numeric(double x)
 {
-	return std::make_unique<NumericConstantToken>(x);
+	return std::make_shared<NumericConstantToken>(x);
 }
 
 class LogicalOrOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() || b->Value());
 	}
@@ -501,7 +491,7 @@ class LogicalOrOperation : public DualNumericsOperation
 
 class LogicalAndOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() && b->Value());
 	}
@@ -516,7 +506,7 @@ bool DoubleEquals(double a, double b)
 
 class EqualsOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(DoubleEquals(a->Value(), b->Value()));
 	}
@@ -524,7 +514,7 @@ class EqualsOperation : public DualNumericsOperation
 
 class NotEqualsOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(!DoubleEquals(a->Value(), b->Value()));
 	}
@@ -532,7 +522,7 @@ class NotEqualsOperation : public DualNumericsOperation
 
 class GTOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() > b->Value());
 	}
@@ -540,7 +530,7 @@ class GTOperation : public DualNumericsOperation
 
 class GTEOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() >= b->Value());
 	}
@@ -549,7 +539,7 @@ class GTEOperation : public DualNumericsOperation
 
 class LTOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() < b->Value());
 	}
@@ -557,7 +547,7 @@ class LTOperation : public DualNumericsOperation
 
 class LTEOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() <= b->Value());
 	}
@@ -565,7 +555,7 @@ class LTEOperation : public DualNumericsOperation
 
 class BitwiseAndOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(static_cast<int>(a->Value()) & static_cast<int>(b->Value()));
 	}
@@ -573,7 +563,7 @@ class BitwiseAndOperation : public DualNumericsOperation
 
 class BitwiseOrOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(static_cast<int>(a->Value()) | static_cast<int>(b->Value()));
 	}
@@ -581,7 +571,7 @@ class BitwiseOrOperation : public DualNumericsOperation
 
 class LeftShiftOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(static_cast<int64_t>(a->Value()) << static_cast<int>(b->Value()));
 	}
@@ -589,7 +579,7 @@ class LeftShiftOperation : public DualNumericsOperation
 
 class RightShiftOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(static_cast<int>(a->Value()) >> static_cast<int>(b->Value()));
 	}
@@ -597,7 +587,7 @@ class RightShiftOperation : public DualNumericsOperation
 
 class MultiplyOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() * b->Value());
 	}
@@ -605,7 +595,7 @@ class MultiplyOperation : public DualNumericsOperation
 
 class AddOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() + b->Value());
 	}
@@ -613,15 +603,15 @@ class AddOperation : public DualNumericsOperation
 
 class StringAddOperation : public DualStringOperation
 {
-	std::unique_ptr<StringToken> EvalString(StringToken* a, StringToken* b) override
+	std::shared_ptr<StringToken> EvalString(StringToken* a, StringToken* b) override
 	{
-		return std::make_unique<StringConstantToken>(a->Value() + b->Value());
+		return std::make_shared<StringConstantToken>(a->Value() + b->Value());
 	}
 };
 
 class SubtractOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(a->Value() - b->Value());
 	}
@@ -629,7 +619,7 @@ class SubtractOperation : public DualNumericsOperation
 
 class DivideOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		if (b->Value() == 0)
 		{
@@ -641,7 +631,7 @@ class DivideOperation : public DualNumericsOperation
 
 class ModuloOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		if (b->Value() == 0)
 		{
@@ -653,7 +643,7 @@ class ModuloOperation : public DualNumericsOperation
 
 class PowOperation : public DualNumericsOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* a, NumericToken* b) override
 	{
 		return Numeric(std::pow(a->Value(), b->Value()));
 	}
@@ -661,7 +651,7 @@ class PowOperation : public DualNumericsOperation
 
 class NegateOperation : public SingleNumericOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* t)
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* t) override
 	{
 		return Numeric(-t->Value());
 	}
@@ -669,12 +659,11 @@ class NegateOperation : public SingleNumericOperation
 
 class LogicalNotOperation : public SingleNumericOperation
 {
-	std::unique_ptr<NumericToken> EvalNumeric(NumericToken* t)
+	std::shared_ptr<NumericToken> EvalNumeric(NumericToken* t) override
 	{
 		return Numeric(!t->Value());
 	}
 };
-
 
 std::vector<Operator*> s_operators =
 {
@@ -734,6 +723,8 @@ public:
 
 	void ValidateCompilation(ScriptModule& scriptModule) override
 	{
+		if (!scriptModule.curCompileLineIter)
+			throw ParseError("'" + name + "' cannot be called from the interactive interpreter");
 		scriptModule.nestStack.emplace(name, *scriptModule.curCompileLineIter - scriptModule.scriptCompileLines.begin());
 	}
 };
@@ -803,50 +794,142 @@ public:
 	}
 };
 
-class IfFunction : public NestedFunction
+class ConditionalFunction : public NestedFunction
 {
 public:
-
-	IfFunction() : NestedFunction("if", 1){}
+	ConditionalFunction(const std::string& name)
+		: NestedFunction(name, 1)
+	{
+	}
 
 	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
 	{
+		bool val = false;
 		if (auto* numToken = dynamic_cast<NumericToken*>(params.at(0)))
 		{
-			if (!numToken->Value())
+			val = numToken->Value();
+			if (!val)
 			{
 				const auto line = scriptModule.beginToEndMap[scriptModule.GetCurrentRunLine()];
-				*scriptModule.curRunLineIter = scriptModule.scriptRunLines.begin() + line;
+				scriptModule.GoToLine(line);
 			}
 		}
+		scriptModule.ifResultStack.push(val);
 		return 0;
 	}
-	
-	bool ValidateParams(const std::vector<OperandToken*>& params)
+
+	bool ValidateParams(const std::vector<OperandToken*>& params) override
 	{
-		return true;
-	};
+		return dynamic_cast<NumericToken*>(params.at(0));
+	}
+};
+
+class IfFunction : public ConditionalFunction
+{
+public:
+
+	IfFunction() : ConditionalFunction("if"){}
 };
 
 class ElseFunction : public Function
 {
-	ElseFunction() : Function("else", 0) {}
-
 
 public:
+	ElseFunction() : Function("else", 0) {}
+
 	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
 	{
-		
+		if (scriptModule.ifResultStack.empty())
+			throw ParseError("Error evaluating else statement (no if result detected)");
+		const auto ifResult = scriptModule.ifResultStack.top();
+		scriptModule.ifResultStack.pop();
+		if (ifResult)
+		{
+			scriptModule.GoToLine(scriptModule.beginToEndMap[scriptModule.GetCurrentRunLine()]);
+		}
 	}
+	
 	bool ValidateParams(const std::vector<OperandToken*>& params) override { return true;}
+	
 	void ValidateCompilation(ScriptModule& scriptModule) override
 	{
-		auto& top = scriptModule.nestStack.top();
-		if (scriptModule.nestStack.empty() || (top.name != "if" || top.name != "elseif"))
+		
+		if (scriptModule.nestStack.empty())
 		{
 			throw ParseError("Misplaced 'else' statement");
 		}
-		scriptModule.beginToEndMap[top.line] = scriptModule.GetCurrentCompileLine();
+		auto& top = scriptModule.nestStack.top();
+		if (top.name != "if" && top.name != "elseif")
+		{
+			throw ParseError("Missing 'if' for 'else' statement");
+		}
+		const auto curLine = scriptModule.GetCurrentCompileLine();
+		scriptModule.beginToEndMap[top.line] = curLine;
+		scriptModule.nestStack.pop();
+		scriptModule.nestStack.push(NestedBeginDeclaration("else", curLine));
+	}
+};
+
+class ElseIfFunction : public Function
+{
+
+public:
+	ElseIfFunction() : Function("elseif", 1) {}
+
+	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
+	{
+		if (scriptModule.ifResultStack.empty())
+			throw ParseError("Error evaluating elseif statement (no if result detected)");
+		const auto ifResult = scriptModule.ifResultStack.top();
+		scriptModule.ifResultStack.pop();
+		const bool result = dynamic_cast<NumericToken*>(params.at(0))->Value();
+		if (ifResult || !result)
+		{
+			scriptModule.GoToLine(scriptModule.beginToEndMap[scriptModule.GetCurrentRunLine()]);
+		}
+		if (ifResult)
+			scriptModule.ifResultStack.push(true);
+		else
+			scriptModule.ifResultStack.push(result);
+		return 0;
+	}
+
+	bool ValidateParams(const std::vector<OperandToken*>& params) override { return true; }
+
+	void ValidateCompilation(ScriptModule& scriptModule) override
+	{
+
+		if (scriptModule.nestStack.empty())
+		{
+			throw ParseError("Misplaced 'elseif' statement");
+		}
+		auto& top = scriptModule.nestStack.top();
+		if (top.name != "if" && top.name != "elseif")
+		{
+			throw ParseError("Missing 'if' for 'elseif' statement");
+		}
+		const auto curLine = scriptModule.GetCurrentCompileLine();
+		scriptModule.beginToEndMap[top.line] = curLine;
+		scriptModule.nestStack.pop();
+		scriptModule.nestStack.push(NestedBeginDeclaration("elseif", curLine));
+	}
+};
+
+class WhileFunction : public ConditionalFunction
+{
+public:
+
+	WhileFunction() : ConditionalFunction("while") {}
+
+	void ValidateCompilation(ScriptModule& scriptModule) override
+	{
+		ConditionalFunction::ValidateCompilation(scriptModule);
+		auto& top = scriptModule.nestStack.top();
+		top.onEnd = [&](ScriptModule& mod)
+		{
+			if (!mod.ifResultStack.empty() && mod.ifResultStack.top())
+				mod.GoToLine(top.line);
+		};
 	}
 };
 
@@ -881,10 +964,8 @@ public:
 		}
 		const auto& top = scriptModule.nestStack.top();
 		const auto curLine = scriptModule.GetCurrentCompileLine();
-		if (scriptModule.beginToEndMap.find(top.line) == scriptModule.beginToEndMap.end()) // make sure we don't override an else
-		{
-			scriptModule.beginToEndMap[top.line] = curLine;
-		}
+
+		scriptModule.beginToEndMap[top.line] = curLine;
 		scriptModule.endToBeginMap[curLine] = EndToBegin(top.line, top.onEnd);
 		scriptModule.nestStack.pop();
 	}
@@ -895,7 +976,10 @@ std::vector<Function*> s_functions =
 	new SqrtFunction(),
 	new PrintFunction(),
 	new IfFunction(),
-	new EndFunction()
+	new ElseFunction(),
+	new ElseIfFunction(),
+	new EndFunction(),
+	new WhileFunction()
 };
 
 class StringIterator
@@ -968,7 +1052,7 @@ public:
 		return result;
 	}
 
-	std::unique_ptr<OperatorToken> ParseOperator()
+	std::shared_ptr<OperatorToken> ParseOperator()
 	{
 		const auto opStr = GetCurOperatorString();
 		if (opStr.empty())
@@ -979,7 +1063,7 @@ public:
 		{
 			if (op->operator_ == opStr)
 			{
-				return std::make_unique<OperatorToken>(op);
+				return std::make_shared<OperatorToken>(op);
 			}
 		}
 		throw ParseError("Unsupported operator " + opStr);
@@ -987,7 +1071,7 @@ public:
 	
 };
 
-std::unique_ptr<OperandToken> ParseNumericConstant(const std::string& opStr)
+std::shared_ptr<OperandToken> ParseNumericConstant(const std::string& opStr)
 {
 	try
 	{
@@ -1000,26 +1084,26 @@ std::unique_ptr<OperandToken> ParseNumericConstant(const std::string& opStr)
 	return nullptr;
 }
 
-std::unique_ptr<FunctionCallToken> ParseFunctionCall(const std::string& opStr)
+std::shared_ptr<FunctionCallToken> ParseFunctionCall(const std::string& opStr)
 {
 	for (auto* iter : s_functions)
 	{
 		if (iter->name == opStr)
 		{
-			return std::make_unique<FunctionCallToken>(iter);
+			return std::make_shared<FunctionCallToken>(iter);
 		}
 	}
 	return nullptr;
 }
 
-std::unique_ptr<OperandToken> ParseVariableToken(const std::string& opStr)
+std::shared_ptr<OperandToken> ParseVariableToken(const std::string& opStr)
 {
 	if (const auto iter = s_scriptModule.scriptVariables.find(opStr); iter != s_scriptModule.scriptVariables.end())
 	{
 		if (auto* numVar = dynamic_cast<NumericVariable*>(iter->second.get()))
-			return std::make_unique<NumericVariableToken>(numVar);
+			return std::make_shared<NumericVariableToken>(numVar);
 		if (auto* strVar = dynamic_cast<StringVariable*>(iter->second.get()))
-			return std::make_unique<StringVariableToken>(strVar);
+			return std::make_shared<StringVariableToken>(strVar);
 	}
 	return nullptr;
 }
@@ -1038,10 +1122,10 @@ bool IsClosedBracket(OperatorOrFunctionCallToken* token)
 	return false;
 }
 
-std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator, ScriptModule& scriptModule)
+std::vector<std::shared_ptr<Token>> ParseExpression(StringIterator& iterator, ScriptModule& scriptModule)
 {
-	std::vector<std::unique_ptr<Token>> result;
-	std::stack<std::unique_ptr<OperatorOrFunctionCallToken>> operatorsOrFuncs;
+	std::vector<std::shared_ptr<Token>> result;
+	std::stack<std::shared_ptr<OperatorOrFunctionCallToken>> operatorsOrFuncs;
 	while (!iterator.End())
 	{
 		if (isspace(iterator.Peek()))
@@ -1080,7 +1164,7 @@ std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator, Sc
 			if (iterator.Peek() == '"')
 			{
 				auto str = iterator.GetStringInQuotationMarks();
-				result.push_back(std::make_unique<StringConstantToken>(str));
+				result.push_back(std::make_shared<StringConstantToken>(str));
 			}
 			else
 			{
@@ -1098,7 +1182,7 @@ std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator, Sc
 					}
 					else
 					{
-						result.push_back(std::make_unique<StringConstantToken>(opStr));
+						result.push_back(std::make_shared<StringConstantToken>(opStr));
 					}
 				}
 			}
@@ -1112,20 +1196,20 @@ std::vector<std::unique_ptr<Token>> ParseExpression(StringIterator& iterator, Sc
 	return result;
 }
 
-std::unique_ptr<OperandToken> EvaluateExpression(std::vector<std::unique_ptr<Token>>& tokens, ScriptModule& scriptModule)
+std::shared_ptr<OperandToken> EvaluateExpression(std::vector<std::shared_ptr<Token>>& tokens, ScriptModule& scriptModule)
 {
-	std::vector<std::unique_ptr<OperandToken>> tempTokens;
-	std::stack<OperandToken*> stack;
+	std::vector<std::shared_ptr<OperandToken>> tempTokens;
+	std::stack<std::shared_ptr<OperandToken>> stack;
 	for (auto& token : tokens)
 	{
-		if (auto* operand = dynamic_cast<OperandToken*>(token.get()))
+		if (auto operand = std::dynamic_pointer_cast<OperandToken>(token))
 		{
-			std::unique_ptr<OperandToken> varToken;
-			if (auto* strToken = dynamic_cast<StringConstantToken*>(operand); strToken && ((varToken = ParseVariableToken(strToken->Value()))))
+			std::shared_ptr<OperandToken> varToken;
+			if (auto strToken = std::dynamic_pointer_cast<StringConstantToken>(operand); strToken && ((varToken = ParseVariableToken(strToken->Value()))))
 			{
 				// variable
 				tempTokens.push_back(std::move(varToken));
-				stack.push(tempTokens.back().get());
+				stack.push(tempTokens.back());
 			}
 			else
 			{
@@ -1134,27 +1218,27 @@ std::unique_ptr<OperandToken> EvaluateExpression(std::vector<std::unique_ptr<Tok
 		}
 		else if (auto* operator_ = dynamic_cast<OperatorToken*>(token.get()))
 		{
-			std::unique_ptr<OperandToken> result;
+			std::shared_ptr<OperandToken> result;
 			if (stack.size() < operator_->Value()->numOperands)
 				throw ParseError("Invalid number of operands for operator " + std::to_string(operator_->Value()->numOperands));
 			if (auto* op = dynamic_cast<DualOperandOperator*>(operator_->Value()))
 			{
-				auto* rhsToken = stack.top();
+				auto rhsToken = stack.top();
 				stack.pop();
-				auto* lhsToken = stack.top();
+				auto lhsToken = stack.top();
 				stack.pop();
-				result = op->Eval(lhsToken, rhsToken);
+				result = op->Eval(lhsToken.get(), rhsToken.get());
 			}
 			else if (auto* op = dynamic_cast<SingleOperandOperator*>(operator_->Value()))
 			{
-				auto* token = stack.top();
+				auto token = stack.top();
 				stack.pop();
-				result = op->Eval(token);
+				result = op->Eval(token.get());
 			}
 			if (!result)
 				throw ParseError("Invalid operands for operator " + operator_->Value()->operator_);
 			tempTokens.push_back(std::move(result));
-			stack.push(tempTokens.back().get());
+			stack.push(tempTokens.back());
 		}
 		else if (auto* function = dynamic_cast<FunctionCallToken*>(token.get()))
 		{
@@ -1163,26 +1247,22 @@ std::unique_ptr<OperandToken> EvaluateExpression(std::vector<std::unique_ptr<Tok
 			std::vector<OperandToken*> params;
 			for (auto i = 0u; i < function->Value()->numParams; ++i)
 			{
-				params.push_back(stack.top());
+				params.push_back(stack.top().get());
 				stack.pop();
 			}
 			if (!function->Value()->ValidateParams(params))
 				throw ParseError("Wrong parameter types for function " + function->ToString());
 			const auto result = function->Value()->Execute(params, scriptModule);
 			tempTokens.push_back(Numeric(result));
-			stack.push(tempTokens.back().get());
+			stack.push(tempTokens.back());
 		}
 	}
 	if (stack.size() != 1)
 	{
-		throw ParseError("There was an error evaluating");
+		throw ParseError("Not a valid expression");
 	}
-	for (auto& temp : tempTokens)
-	{
-		if (stack.top() == temp.get())
-			return std::move(temp);
-	}
-	return nullptr;
+	
+	return stack.top();
 }
 
 bool OperatorOrFunction::Precedes(OperatorOrFunction* other) const
@@ -1195,7 +1275,7 @@ bool OperatorOrFunction::Precedes(OperatorOrFunction* other) const
 	return other->precedence <= precedence;
 }
 
-void ScriptModule::Compile()
+bool ScriptModule::Compile()
 {
 	auto lineNum = 0u;
 	try
@@ -1222,19 +1302,21 @@ void ScriptModule::Compile()
 			line = e.line;
 		std::cout << "Syntax error on line " << line << std::endl;
 		std::cout << e.what() << std::endl;
+		return false;
 	}
+	return true;
 }
 
 void ScriptModule::Execute()
 {
-	auto lineNum = 0u;
+	int lineNum = 1;
 	try
 	{
 		for (auto iter = this->scriptRunLines.begin(); iter != this->scriptRunLines.end(); ++iter)
 		{
+			lineNum = iter - this->scriptRunLines.begin() + 1;
 			auto& line = *iter;
 			this->curRunLineIter = &iter;
-			++lineNum;
 			EvaluateExpression(line.tokens, *this);
 		}
 	}
@@ -1260,8 +1342,32 @@ void ParseFile(const std::string& fileName)
 		scriptLines.emplace_back();
 	} while (std::getline(is, scriptLines.back()));
 	s_scriptModule = ScriptModule(scriptLines);
-	s_scriptModule.Compile();
-	s_scriptModule.Execute();
+	if (s_scriptModule.Compile())
+		s_scriptModule.Execute();
+}
+
+void RunInterpreter()
+{
+	ScriptModule scriptModule;
+	std::cout << "kScript Interpreter" << std::endl;
+	while (true)
+	{
+		std::cout << ">> ";
+		std::string str;
+		std::getline(std::cin, str);
+		StringIterator iterator(str);
+		try
+		{
+			auto tokens = ParseExpression(iterator, scriptModule);
+			auto result = EvaluateExpression(tokens, scriptModule);
+			std::cout << "Result >> " + result->ToString() << std::endl;
+		}
+		catch (const ParseError& e)
+		{
+			std::cout << "Syntax error: " << e.what() << std::endl;
+		}
+		
+	}
 }
 
 int main(int argc, char* argv[])
@@ -1270,8 +1376,12 @@ int main(int argc, char* argv[])
 	{
 		ParseFile(argv[1]);
 	}
+	else if (argc == 1)
+	{
+		RunInterpreter();
+	}
 	else
 	{
-		
+		std::cout << "Usage: 'kScript <file>' OR 'kScript' for interactive interpreter";
 	}
 }

@@ -1,5 +1,6 @@
-if 1
-	print "tst"
-else
-	print "else"	
-end 
+i = 0
+
+while (i < 10)
+	print i
+	i = i + 1
+end
