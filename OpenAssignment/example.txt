@@ -43,4 +43,5 @@ while (index <= 4)
 	index = index + 1
 end
 
+print("5^2 = " + 5^2)
 print("The square root of 7 is " + (sqrt 7))
