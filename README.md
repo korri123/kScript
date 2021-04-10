@@ -34,7 +34,7 @@ print ("5 * 2 / 10 = " + (5 * 2 / 10))
 
 myVariable = 5 * 2 + 1
 
-print myVariable + " is eleven"
+print (myVariable + " is eleven")
 
 strVar1 = "Rob Mayth"
 strVar2 = "Is Gonna Rock The Place"
@@ -83,7 +83,7 @@ Will output:
 
 ```
 5 * 2 / 10 = 1
-11
+11 is eleven
 Rob Mayth Is Gonna Rock The Place
 I am 0 years from turning 100
 I am 1 year from turning 100
