@@ -1,6 +1,46 @@
-i = 0
+print ("5 * 2 / 10 = " + (5 * 2 / 10))
 
+myVariable = 5 * 2 + 1
+
+print myVariable + " is eleven"
+
+strVar1 = "Rob Mayth"
+strVar2 = "Is Gonna Rock The Place"
+print (strVar1 + " " + strVar2)
+
+i = 0
 while (i < 10)
-	print i
+	svYears = "years"
+	if (i == 1)
+		svYears = "year"
+	end
+	print ("I am " + i + " " + svYears + " from turning 100")
 	i = i + 1
 end
+
+condition = true
+condition2 = false
+
+if (condition && !condition2)
+	print "This will print!"
+else
+	print "This won't print"
+end
+
+index = 0
+while (index <= 4)
+	if (index == 0)
+		print "The moment I wake up"
+	elseif (index == 1)
+		print "I can feel you right by my side"
+	elseif (index == 2)
+		print "Knowing you will be around"
+	elseif (index == 3)
+		print "No matter if I'm wrong or right"
+	else
+		print "Well I guess I'm stuck with you"
+	end
+	index = index + 1
+end
+
+print("The square root of 7 is " + (sqrt 7))

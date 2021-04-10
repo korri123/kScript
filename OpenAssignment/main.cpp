@@ -1,12 +1,23 @@
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <stack>
 #include <string>
 #include <utility>
 #include <vector>
+#include <sstream>
+#include <memory>
+#include <cmath>
 
+std::string ToString(double d)
+{
+	std::ostringstream oss;
+	oss << std::setprecision(8) << std::noshowpoint << d;
+	std::string str = oss.str();
+	return str;
+}
 
 class OperandToken;
 class Operation;
@@ -74,7 +85,7 @@ public:
 
 	std::string ToString() override
 	{
-		return std::to_string(Value());
+		return ::ToString(Value());
 	}
 
 	virtual double Value() = 0;
@@ -98,7 +109,7 @@ public:
 
 	std::string ToString() override
 	{
-		return std::to_string(variable->data);
+		return ::ToString(variable->data);
 	}
 
 
@@ -278,6 +289,11 @@ public:
 	}
 };
 
+std::shared_ptr<StringToken> MakeString(const std::string& str)
+{
+	return std::make_shared<StringConstantToken>(str);
+}
+
 class DualStringOperation : public DualOperandOperation
 {
 	virtual std::shared_ptr<StringToken> EvalString(StringToken*, StringToken*) = 0;
@@ -286,12 +302,26 @@ public:
 
 	std::shared_ptr<OperandToken> Eval(OperandToken* a, OperandToken* b) override
 	{
-		StringToken* _a, * _b;
-		if (((_a = dynamic_cast<StringToken*>(a))) && ((_b = dynamic_cast<StringToken*>(b))))
+		std::string str1;
+		std::string str2;
+		if (auto* _a = dynamic_cast<StringToken*>(a))
 		{
-			return EvalString(_a, _b);
+			str1 = _a->Value();
 		}
-		return nullptr;
+		else if (auto* _a = dynamic_cast<NumericToken*>(a))
+		{
+			str1 = ToString(_a->Value());
+		}
+
+		if (auto* _b = dynamic_cast<StringToken*>(b))
+		{
+			str2 = _b->Value();
+		}
+		else if (auto* _b = dynamic_cast<NumericToken*>(b))
+		{
+			str2 = ToString(_b->Value());
+		}
+		return MakeString(str1 + str2);
 	}
 };
 
@@ -705,8 +735,8 @@ public:
 	{
 	}
 
-	virtual double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) = 0;
-	virtual bool ValidateParams(const std::vector<OperandToken*>& params) = 0;
+	virtual double Execute(const std::vector<std::shared_ptr<OperandToken>>& params, ScriptModule& scriptModule) = 0;
+	virtual bool ValidateParams(const std::vector<std::shared_ptr<OperandToken>>& params) { return true; };
 	
 	virtual void ValidateCompilation(ScriptModule& scriptModule)
 	{
@@ -754,16 +784,16 @@ public:
 
 	SqrtFunction() : Function("sqrt", 1){}
 
-	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
+	double Execute(const std::vector<std::shared_ptr<OperandToken>>& params, ScriptModule& scriptModule) override
 	{
-		auto* param = dynamic_cast<NumericToken*>(params.at(0));
+		auto param = std::dynamic_pointer_cast<NumericToken>(params.at(0));
 		return std::sqrt(param->Value());
 	}
 
 
-	bool ValidateParams(const std::vector<OperandToken*>& params) override
+	bool ValidateParams(const std::vector<std::shared_ptr<OperandToken>>& params) override
 	{
-		return dynamic_cast<NumericToken*>(params.at(0));
+		return std::dynamic_pointer_cast<NumericToken>(params.at(0)).get();
 	}
 };
 
@@ -773,22 +803,22 @@ public:
 
 	PrintFunction() : Function("print", 1) {}
 
-	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
+	double Execute(const std::vector<std::shared_ptr<OperandToken>>& params, ScriptModule& scriptModule) override
 	{
 		std::string toPrint;
-		if (auto* strToken = dynamic_cast<StringToken*>(params.at(0)))
+		if (auto strToken = std::dynamic_pointer_cast<StringToken>(params.at(0)))
 		{
 			toPrint = strToken->Value();
 		}
-		else if (auto* numericToken = dynamic_cast<NumericToken*>(params.at(0)))
+		else if (auto numericToken = std::dynamic_pointer_cast<NumericToken>(params.at(0)))
 		{
-			toPrint = std::to_string(numericToken->Value());
+			toPrint = ToString(numericToken->Value());
 		}
 		std::cout << toPrint << std::endl;
 		return 1;
 	}
 
-	bool ValidateParams(const std::vector<OperandToken*>& params) override
+	bool ValidateParams(const std::vector<std::shared_ptr<OperandToken>>& params) override
 	{
 		return true;
 	}
@@ -802,10 +832,10 @@ public:
 	{
 	}
 
-	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
+	double Execute(const std::vector<std::shared_ptr<OperandToken>>& params, ScriptModule& scriptModule) override
 	{
 		bool val = false;
-		if (auto* numToken = dynamic_cast<NumericToken*>(params.at(0)))
+		if (auto numToken = std::dynamic_pointer_cast<NumericToken>(params.at(0)))
 		{
 			val = numToken->Value();
 			if (!val)
@@ -818,9 +848,9 @@ public:
 		return 0;
 	}
 
-	bool ValidateParams(const std::vector<OperandToken*>& params) override
+	bool ValidateParams(const std::vector<std::shared_ptr<OperandToken>>& params) override
 	{
-		return dynamic_cast<NumericToken*>(params.at(0));
+		return std::dynamic_pointer_cast<NumericToken>(params.at(0)).get();
 	}
 };
 
@@ -837,19 +867,19 @@ class ElseFunction : public Function
 public:
 	ElseFunction() : Function("else", 0) {}
 
-	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
+	double Execute(const std::vector<std::shared_ptr<OperandToken>>& params, ScriptModule& scriptModule) override
 	{
 		if (scriptModule.ifResultStack.empty())
 			throw ParseError("Error evaluating else statement (no if result detected)");
 		const auto ifResult = scriptModule.ifResultStack.top();
-		scriptModule.ifResultStack.pop();
 		if (ifResult)
 		{
 			scriptModule.GoToLine(scriptModule.beginToEndMap[scriptModule.GetCurrentRunLine()]);
 		}
+		return 0;
 	}
 	
-	bool ValidateParams(const std::vector<OperandToken*>& params) override { return true;}
+	bool ValidateParams(const std::vector<std::shared_ptr<OperandToken>>& params) override { return true;}
 	
 	void ValidateCompilation(ScriptModule& scriptModule) override
 	{
@@ -876,13 +906,13 @@ class ElseIfFunction : public Function
 public:
 	ElseIfFunction() : Function("elseif", 1) {}
 
-	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule) override
+	double Execute(const std::vector<std::shared_ptr<OperandToken>>& params, ScriptModule& scriptModule) override
 	{
 		if (scriptModule.ifResultStack.empty())
 			throw ParseError("Error evaluating elseif statement (no if result detected)");
 		const auto ifResult = scriptModule.ifResultStack.top();
 		scriptModule.ifResultStack.pop();
-		const bool result = dynamic_cast<NumericToken*>(params.at(0))->Value();
+		const bool result = std::dynamic_pointer_cast<NumericToken>(params.at(0))->Value();
 		if (ifResult || !result)
 		{
 			scriptModule.GoToLine(scriptModule.beginToEndMap[scriptModule.GetCurrentRunLine()]);
@@ -894,11 +924,10 @@ public:
 		return 0;
 	}
 
-	bool ValidateParams(const std::vector<OperandToken*>& params) override { return true; }
+	bool ValidateParams(const std::vector<std::shared_ptr<OperandToken>>& params) override { return true; }
 
 	void ValidateCompilation(ScriptModule& scriptModule) override
 	{
-
 		if (scriptModule.nestStack.empty())
 		{
 			throw ParseError("Misplaced 'elseif' statement");
@@ -925,10 +954,11 @@ public:
 	{
 		ConditionalFunction::ValidateCompilation(scriptModule);
 		auto& top = scriptModule.nestStack.top();
-		top.onEnd = [&](ScriptModule& mod)
+		auto topLine = top.line;
+		top.onEnd = [topLine](ScriptModule& mod)
 		{
 			if (!mod.ifResultStack.empty() && mod.ifResultStack.top())
-				mod.GoToLine(top.line);
+				mod.GoToLine(topLine);
 		};
 	}
 };
@@ -939,7 +969,7 @@ public:
 
 	EndFunction() : Function("end", 0) {}
 
-	double Execute(const std::vector<OperandToken*>& params, ScriptModule& scriptModule)
+	double Execute(const std::vector<std::shared_ptr<OperandToken>>& params, ScriptModule& scriptModule)
 	{
 		const auto curLine = scriptModule.GetCurrentRunLine();
 		auto& e = scriptModule.endToBeginMap[curLine];
@@ -947,14 +977,9 @@ public:
 		{
 			e.execute(scriptModule);
 		}
+		scriptModule.ifResultStack.pop();
 		return 0;
 	}
-
-	bool ValidateParams(const std::vector<OperandToken*>& params)
-	{
-		return true;
-	}
-
 
 	void ValidateCompilation(ScriptModule& scriptModule) override
 	{
@@ -971,6 +996,30 @@ public:
 	}
 };
 
+class TrueFunction : public Function
+{
+public:
+
+	TrueFunction() : Function("true", 0) {}
+
+	double Execute(const std::vector<std::shared_ptr<OperandToken>>& params, ScriptModule& scriptModule) override
+	{
+		return 1;
+	}
+};
+
+class FalseFunction : public Function
+{
+public:
+
+	FalseFunction() : Function("false", 0) {}
+
+	double Execute(const std::vector<std::shared_ptr<OperandToken>>& params, ScriptModule& scriptModule) override
+	{
+		return 0;
+	}
+};
+
 std::vector<Function*> s_functions =
 {
 	new SqrtFunction(),
@@ -979,7 +1028,9 @@ std::vector<Function*> s_functions =
 	new ElseFunction(),
 	new ElseIfFunction(),
 	new EndFunction(),
-	new WhileFunction()
+	new WhileFunction(),
+	new TrueFunction(),
+	new FalseFunction(),
 };
 
 class StringIterator
@@ -1048,24 +1099,36 @@ public:
 				break;
 			Advance();
 			result += ch;
+			if (ch == '(' || ch == ')')
+				return result;
 		}
 		return result;
 	}
 
-	std::shared_ptr<OperatorToken> ParseOperator()
+	Operator* FindOperator(const std::string& opStr)
 	{
-		const auto opStr = GetCurOperatorString();
-		if (opStr.empty())
-		{
-			return nullptr;
-		}
 		for (auto& op : s_operators)
 		{
 			if (op->operator_ == opStr)
 			{
-				return std::make_shared<OperatorToken>(op);
+				return op;
 			}
 		}
+		return nullptr;
+	}
+
+	std::shared_ptr<OperatorToken> ParseOperator()
+	{
+		auto opStr = GetCurOperatorString();
+		if (opStr.empty())
+		{
+			return nullptr;
+		}
+		if (opStr.size() > 2)
+			throw ParseError("Failed to parse operator " + opStr);
+		auto* op = FindOperator(opStr);
+		if (op)
+			return std::make_shared<OperatorToken>(op);
 		throw ParseError("Unsupported operator " + opStr);
 	}
 	
@@ -1198,7 +1261,6 @@ std::vector<std::shared_ptr<Token>> ParseExpression(StringIterator& iterator, Sc
 
 std::shared_ptr<OperandToken> EvaluateExpression(std::vector<std::shared_ptr<Token>>& tokens, ScriptModule& scriptModule)
 {
-	std::vector<std::shared_ptr<OperandToken>> tempTokens;
 	std::stack<std::shared_ptr<OperandToken>> stack;
 	for (auto& token : tokens)
 	{
@@ -1208,8 +1270,7 @@ std::shared_ptr<OperandToken> EvaluateExpression(std::vector<std::shared_ptr<Tok
 			if (auto strToken = std::dynamic_pointer_cast<StringConstantToken>(operand); strToken && ((varToken = ParseVariableToken(strToken->Value()))))
 			{
 				// variable
-				tempTokens.push_back(std::move(varToken));
-				stack.push(tempTokens.back());
+				stack.push(varToken);
 			}
 			else
 			{
@@ -1237,24 +1298,22 @@ std::shared_ptr<OperandToken> EvaluateExpression(std::vector<std::shared_ptr<Tok
 			}
 			if (!result)
 				throw ParseError("Invalid operands for operator " + operator_->Value()->operator_);
-			tempTokens.push_back(std::move(result));
-			stack.push(tempTokens.back());
+			stack.push(result);
 		}
 		else if (auto* function = dynamic_cast<FunctionCallToken*>(token.get()))
 		{
 			if (stack.size() < function->Value()->numParams)
 				throw ParseError("Invalid number of arguments for function " + function->ToString());
-			std::vector<OperandToken*> params;
+			std::vector<std::shared_ptr<OperandToken>> params;
 			for (auto i = 0u; i < function->Value()->numParams; ++i)
 			{
-				params.push_back(stack.top().get());
+				params.push_back(stack.top());
 				stack.pop();
 			}
 			if (!function->Value()->ValidateParams(params))
 				throw ParseError("Wrong parameter types for function " + function->ToString());
 			const auto result = function->Value()->Execute(params, scriptModule);
-			tempTokens.push_back(Numeric(result));
-			stack.push(tempTokens.back());
+			stack.push(Numeric(result));
 		}
 	}
 	if (stack.size() != 1)
@@ -1366,7 +1425,6 @@ void RunInterpreter()
 		{
 			std::cout << "Syntax error: " << e.what() << std::endl;
 		}
-		
 	}
 }
 
