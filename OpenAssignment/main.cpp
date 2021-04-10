@@ -19,6 +19,11 @@ std::string ToString(double d)
 	return str;
 }
 
+bool IsEmptyString(const std::string& str)
+{
+	return str.empty() || str == "\n" || str == "\r" || str == "\r\n";
+}
+
 class OperandToken;
 class Operation;
 
@@ -1343,7 +1348,7 @@ bool ScriptModule::Compile()
 		{
 			++lineNum;
 			auto& line = *iter;
-			if (line.empty())
+			if (line.empty() || IsEmptyString(line))
 				continue;
 			StringIterator iterator(line);
 			curCompileLineIter = &iter;
@@ -1396,7 +1401,7 @@ void ParseFile(const std::string& fileName)
 	std::vector<std::string> scriptLines;
 	do
 	{
-		if (!scriptLines.empty() && scriptLines.back().empty())
+		if (!scriptLines.empty() && IsEmptyString(scriptLines.back()))
 			scriptLines.pop_back();
 		scriptLines.emplace_back();
 	} while (std::getline(is, scriptLines.back()));
